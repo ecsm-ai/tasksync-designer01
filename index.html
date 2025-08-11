@@ -52,12 +52,12 @@ textarea{min-height:64px;resize:vertical}
 .grouphead{display:flex;justify-content:space-between;align-items:center;font-size:14px;margin-bottom:6px}
 .groupmeta{color:var(--muted)}
 .rail{position:relative;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(36px,1fr);gap:4px;margin-top:4px}
-.cell{height:22px;background:var(--rail);border:1px solid var(--railBorder);border-radius:6px}
+.cell{height:22px;background:var(--rail);border:1px solid var(--railBorder);border-radius:6px;box-sizing:border-box}
 .pbar,.tbar{position:absolute;border-radius:8px;font-size:11px;display:flex;align-items:center;justify-content:center;white-space:nowrap}
 .pbar{height:var(--proj-h); color:#fff; box-shadow:0 2px 4px rgba(0,0,0,.1)}
 .tbar{height:var(--task-h); color:#0f172a; border:1px solid var(--railBorder)}
 
-/* Panels */
+/* Panels: top 2 (Client/Project) + detail strip */
 .panesTop{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}
 @media(max-width:1000px){.panesTop{grid-template-columns:1fr}}
 .compact .row{gap:6px}
@@ -86,7 +86,7 @@ textarea{min-height:64px;resize:vertical}
 .flag:before{content:"";position:absolute;left:0;top:2px;border-top:4px solid transparent;border-bottom:4px solid transparent;border-left:8px solid currentColor}
 .flag:after{content:"";position:absolute;left:8px;top:2px;width:2px;height:8px;background:currentColor;border-radius:1px}
 
-/* === ガント強制表示＋ズレ補正の基礎 === */
+/* === ガント強制表示＆ズレ防止の安定化FIX === */
 #groups{ display:block; }
 .rail{ display:grid !important; position:relative !important; overflow:visible; }
 .pbar,.tbar{ position:absolute; top:0; z-index:10; }
@@ -211,9 +211,12 @@ textarea{min-height:64px;resize:vertical}
 <script>
 /* ===== Utilities ===== */
 function fmt(d){ return d.toISOString().slice(0,10); }
+function daysInMonth(d){
+  var dt = (d instanceof Date) ? d : new Date(d);
+  return new Date(dt.getFullYear(), dt.getMonth()+1, 0).getDate();
+}
 function parse(s){ return new Date(s+'T00:00:00'); }
 function addDays(d,n){ return new Date(d.getFullYear(), d.getMonth(), d.getDate()+n); }
-function daysInMonth(d){ return new Date(d.getFullYear(), d.getMonth()+1, 0).getDate(); }
 function startOfWeek(d){ return addDays(d, -((d.getDay()+6)%7)); }
 function pad(n){ return (n<10?'0':'')+n; }
 function fmtTS(dt){ return dt.getFullYear()+'-'+pad(dt.getMonth()+1)+'-'+pad(dt.getDate())+' '+pad(dt.getHours())+':'+pad(dt.getMinutes()); }
@@ -255,15 +258,28 @@ var seed=(function(){ var a=new Date(); return [
   {id:'t3', title:'素材収集', client:'Beta Studio', project:'キャンペーンA/W', start:fmt(new Date(a.getFullYear(), a.getMonth(), 7)), end:fmt(new Date(a.getFullYear(), a.getMonth(), 10)), progress:50, status:'In Progress', memos:[], createdAt:new Date().toISOString()}
 ];})();
 
-/* Ensure maps */
+/* Ensurers */
 function ensureClient(name){ var key=(name&&name.trim())? name.trim(): '(未設定)'; if(!state.clients[key]){ state.clients[key]={ company:key, person:'', phone:'', email:'', address:'', terms:'' }; } return key; }
 function ensureProject(name){ var key=(name&&name.trim())? name.trim(): '(未分類)'; if(!state.projects[key]){ state.projects[key]={ name:key, start:'', end:'', notes:'', progress:0, status:'Planned' }; } return key; }
 
 /* Load/Save */
 function load(){
-  try{ var s=JSON.parse(localStorage.getItem(storeKey)||'{}'); if(s && s.tasks){ state=s; } else { state.tasks=seed; } }catch(e){ state.tasks=seed; }
-  var th=localStorage.getItem(themeKey); if(th==='dark'){ document.documentElement.classList.add('dark'); }
-  for(var i=0;i<state.tasks.length;i++){ ensureClient(state.tasks[i].client); ensureProject(state.tasks[i].project); }
+  try{
+    var s=JSON.parse(localStorage.getItem(storeKey)||'{}');
+    if(s && s.tasks){ state=s; } else { state.tasks=seed; }
+  }catch(e){ state.tasks=seed; }
+
+  // monthAnchor（Dateに戻す）
+  state.monthAnchor = new Date(state.monthAnchor || Date.now());
+  if (isNaN(state.monthAnchor)) state.monthAnchor = new Date();
+
+  var th=localStorage.getItem(themeKey);
+  if(th==='dark'){ document.documentElement.classList.add('dark'); }
+
+  for(var i=0;i<state.tasks.length;i++){
+    ensureClient(state.tasks[i].client);
+    ensureProject(state.tasks[i].project);
+  }
 }
 function save(){ localStorage.setItem(storeKey, JSON.stringify(state)); }
 
@@ -283,7 +299,12 @@ function renderSummary(){
 function renderDays(){
   var root=document.getElementById('days'); root.innerHTML='';
   var y=state.monthAnchor.getFullYear(); var m=state.monthAnchor.getMonth(); var n=daysInMonth(state.monthAnchor);
-  for(var i=1;i<=n;i++){ var d=new Date(y,m,i); var div=document.createElement('div'); div.className='day'; div.textContent=(m+1)+'/'+i; var dow=document.createElement('span'); dow.className='dow'; dow.textContent='日月火水木金土'.charAt(d.getDay()); div.appendChild(dow); root.appendChild(div); }
+  for(var i=1;i<=n;i++){
+    var d=new Date(y,m,i);
+    var div=document.createElement('div'); div.className='day'; div.textContent=(m+1)+'/'+i;
+    var dow=document.createElement('span'); dow.className='dow'; dow.textContent='日月火水木金土'.charAt(d.getDay());
+    div.appendChild(dow); root.appendChild(div);
+  }
 }
 
 /* Status palette */
@@ -355,19 +376,34 @@ function computeProjectRange(projectName, tasks){
   return {start:minS, end:maxE};
 }
 
-/* === PIXEL正確配置: グリッドのセルを実測してバーを置く === */
+/* === ピクセル正確配置（ズレ防止版） === */
 function placeBarPx(rail, bar, index, span){
   const cells = rail.querySelectorAll('.cell');
-  if(!cells.length) return;
-  const startIdx = Math.max(0, Math.min(index, cells.length-1));
-  const endIdx   = Math.max(startIdx, Math.min(index+span-1, cells.length-1));
-  const left = cells[startIdx].offsetLeft;
-  const right = cells[endIdx].offsetLeft + cells[endIdx].offsetWidth;
+  const total = cells.length;
+  if(!total){ return; }
+
+  const s = Math.max(0, Math.min(index, total-1));
+  const e = Math.max(s, Math.min(index+span-1, total-1));
+
+  const railRect = rail.getBoundingClientRect();
+  const sRect = cells[s].getBoundingClientRect();
+  const eRect = cells[e].getBoundingClientRect();
+
+  let left  = Math.round(sRect.left - railRect.left + rail.scrollLeft);
+  let width = Math.max(1, Math.round(eRect.right - sRect.left));
+
+  // フォールバック（計測失敗時は% + ギャップ補正）
+  if(!isFinite(left) || width<=0){
+    const totalDays = total;
+    bar.style.left  = `calc(${index}*(100%/${totalDays}) + ${(index*4)}px)`;
+    bar.style.width = `calc(${span}*(100%/${totalDays}) + ${((span-1)*4)}px)`;
+    return;
+  }
   bar.style.left  = left + 'px';
-  bar.style.width = Math.max(1, right - left) + 'px';
+  bar.style.width = width + 'px';
 }
 
-/* Rail helpers */
+/* 月内に収まる範囲を返す */
 function clampToMonth(startStr,endStr){
   const start = safeParse(startStr), end = safeParse(endStr);
   if(!start || !end) return null;
@@ -389,7 +425,11 @@ function clampToMonth(startStr,endStr){
 function renderGroups(){
   var root=document.getElementById('groups'); root.innerHTML='';
   var tasks = filteredTasks();
-  if(!tasks.length){ var empty=document.createElement('div'); empty.className='card'; empty.textContent='該当タスクがありません。上の入力から追加してください。'; root.appendChild(empty); return; }
+  if(!tasks.length){
+    var empty=document.createElement('div'); empty.className='card';
+    empty.textContent='該当タスクがありません。上の入力から追加してください。';
+    root.appendChild(empty); return;
+  }
   var total=daysInMonth(state.monthAnchor);
   var map = groupByProject(tasks);
   var projects = Object.keys(map).sort();
@@ -411,8 +451,9 @@ function renderGroups(){
       head.appendChild(tl); head.appendChild(tr);
       group.appendChild(head);
 
-      // 案件レール（先にDOMへ追加してから測る）
-      var railP=document.createElement('div'); railP.className='rail'; railP.style.gridTemplateColumns='repeat('+total+', minmax(36px,1fr))';
+      // 案件バー
+      var railP=document.createElement('div'); railP.className='rail';
+      railP.style.gridTemplateColumns='repeat('+total+', minmax(36px,1fr))';
       for(var c=0;c<total;c++){ var cell=document.createElement('div'); cell.className='cell'; railP.appendChild(cell); }
       group.appendChild(railP);
 
@@ -424,10 +465,11 @@ function renderGroups(){
         requestAnimationFrame(function(){ placeBarPx(railP, barP, posP.index, posP.span); });
       }
 
-      // タスク
+      // タスクバー
       for(var t=0;t<list.length;t++){
         (function(task){
-          var rail=document.createElement('div'); rail.className='rail'; rail.style.gridTemplateColumns='repeat('+total+', minmax(36px,1fr))';
+          var rail=document.createElement('div'); rail.className='rail';
+          rail.style.gridTemplateColumns='repeat('+total+', minmax(36px,1fr))';
           for(var c=0;c<total;c++){ var cell2=document.createElement('div'); cell2.className='cell'; rail.appendChild(cell2); }
           group.appendChild(rail);
 
@@ -449,14 +491,16 @@ function renderGroups(){
   }
 }
 
-/* Panels */
+/* Panels orchestrator */
 function renderPanels(){ renderClientPanel(); renderProjectPanel(); renderDetailStrip(); }
 
+/* Client panel helpers */
 function listAllClients(){ var map={}, out=[], k; for(var i=0;i<state.tasks.length;i++){ k=ensureClient(state.tasks[i].client); if(!map[k]){ map[k]=true; out.push(k); } } for(k in state.clients){ if(state.clients.hasOwnProperty(k) && !map[k]){ map[k]=true; out.push(k); } } return out; }
 function listAllProjects(){ var map={}, out=[], k; for(var i=0;i<state.tasks.length;i++){ k=ensureProject(state.tasks[i].project); if(!map[k]){ map[k]=true; out.push(k); } } for(k in state.projects){ if(state.projects.hasOwnProperty(k) && !map[k]){ map[k]=true; out.push(k); } } return out; }
 function currentTask(){ for(var i=0;i<state.tasks.length;i++){ if(state.tasks[i].id===state.selectedId){ return state.tasks[i]; } } return null; }
 function activeClientKey(){ var t=currentTask(); if(t && t.client){ return ensureClient(t.client); } if(state.client!=='all'){ return ensureClient(state.client); } var arr=listAllClients(); return arr.length? arr[0] : ensureClient('(未設定)'); }
 
+/* Client panel */
 function renderClientPanel(){
   var select=document.getElementById('pClientSelect');
   var company=document.getElementById('pCompany'), person=document.getElementById('pPerson'), phone=document.getElementById('pPhone'), email=document.getElementById('pEmail'), address=document.getElementById('pAddress'), terms=document.getElementById('pTerms');
@@ -479,6 +523,7 @@ function renderClientPanel(){
   };
 }
 
+/* Project panel */
 function activeProjectKey(){ var t=currentTask(); if(t && t.project){ return ensureProject(t.project); } return ensureProject('(未分類)'); }
 function renderProjectPanel(){
   var t=currentTask(), key=activeProjectKey(), data=state.projects[key]||{name:'',start:'',end:'',notes:'',progress:0,status:'Planned'};
@@ -706,6 +751,8 @@ function scheduleTonight(){
 function renderAll(){ renderSummary(); renderDays(); bindHeader(); bindSidebar(); renderGroups(); renderPanels(); }
 load(); renderAll();
 
+/* 画面サイズ変更で再測定して再配置（ズレ防止） */
+window.addEventListener('resize', function(){ renderGroups(); });
 </script>
 </body>
 </html>
