@@ -706,8 +706,6 @@ function scheduleTonight(){
 function renderAll(){ renderSummary(); renderDays(); bindHeader(); bindSidebar(); renderGroups(); renderPanels(); }
 load(); renderAll();
 
-/* 画面サイズ変更で再測定して再配置（ズレ防止） */
-window.addEventListener('resize', function(){ renderGroups(); });
 </script>
 </body>
 </html>
