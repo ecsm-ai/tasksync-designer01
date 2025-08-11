@@ -57,7 +57,7 @@ textarea{min-height:64px;resize:vertical}
 .pbar{height:var(--proj-h); color:#fff; box-shadow:0 2px 4px rgba(0,0,0,.1)}
 .tbar{height:var(--task-h); color:#0f172a; border:1px solid var(--railBorder)}
 
-/* Panels: top 2 (Client/Project) + detail strip */
+/* Panels */
 .panesTop{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}
 @media(max-width:1000px){.panesTop{grid-template-columns:1fr}}
 .compact .row{gap:6px}
@@ -86,7 +86,7 @@ textarea{min-height:64px;resize:vertical}
 .flag:before{content:"";position:absolute;left:0;top:2px;border-top:4px solid transparent;border-bottom:4px solid transparent;border-left:8px solid currentColor}
 .flag:after{content:"";position:absolute;left:8px;top:2px;width:2px;height:8px;background:currentColor;border-radius:1px}
 
-/* === ガント強制表示＆ズレ防止の安定化FIX === */
+/* === ガント強制表示＋ズレ防止の基礎 === */
 #groups{ display:block; }
 .rail{ display:grid !important; position:relative !important; overflow:visible; }
 .pbar,.tbar{ position:absolute; top:0; z-index:10; }
@@ -210,46 +210,28 @@ textarea{min-height:64px;resize:vertical}
 
 <script>
 /* ===== Utilities ===== */
-function fmt(d){ return d.toISOString().slice(0,10); }
-function daysInMonth(d){
-  var dt = (d instanceof Date) ? d : new Date(d);
-  return new Date(dt.getFullYear(), dt.getMonth()+1, 0).getDate();
+/* ローカル日付固定（UTCズレ防止） */
+function fmt(d){
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
 }
+function daysInMonth(d){ const dt=(d instanceof Date)?d:new Date(d); return new Date(dt.getFullYear(), dt.getMonth()+1, 0).getDate(); }
 function parse(s){ return new Date(s+'T00:00:00'); }
 function addDays(d,n){ return new Date(d.getFullYear(), d.getMonth(), d.getDate()+n); }
 function startOfWeek(d){ return addDays(d, -((d.getDay()+6)%7)); }
 function pad(n){ return (n<10?'0':'')+n; }
 function fmtTS(dt){ return dt.getFullYear()+'-'+pad(dt.getMonth()+1)+'-'+pad(dt.getDate())+' '+pad(dt.getHours())+':'+pad(dt.getMinutes()); }
 function isYMD(s){ return typeof s==='string' && /^\d{4}-\d{2}-\d{2}$/.test(s); }
-function safeParse(s){
-  if(!isYMD(s)) return null;
-  const d=new Date(s+'T00:00:00');
-  return isNaN(d.getTime()) ? null : d;
-}
+function safeParse(s){ if(!isYMD(s)) return null; const d=new Date(s+'T00:00:00'); return isNaN(d.getTime())?null:d; }
 
 /* ===== State ===== */
 var storeKey='tsd_persona_v351';
 var themeKey='tsd_theme_v351';
-var state={
-  monthAnchor:new Date(),
-  preset:'all',
-  client:'all',
-  selectedId:null,
-  statusFilter:'all',
-  openDetails:[],
-  tasks:[],
-  clients:{},
-  projects:{}
-};
+var state={ monthAnchor:new Date(), preset:'all', client:'all', selectedId:null, statusFilter:'all', openDetails:[], tasks:[], clients:{}, projects:{} };
 
 /* Colors */
-var COLORS = {
-  'Planned':    {proj:'#60a5fa', task:'#bfdbfe'},
-  'In Progress':{proj:'#34d399', task:'#bbf7d0'},
-  'Blocked':    {proj:'#f87171', task:'#fecaca'},
-  'Done':       {proj:'#8b5cf6', task:'#ddd6fe'}
-};
-var STATUS_ORDER = ['Planned','In Progress','Blocked','Done'];
+var COLORS={ 'Planned':{proj:'#60a5fa',task:'#bfdbfe'}, 'In Progress':{proj:'#34d399',task:'#bbf7d0'}, 'Blocked':{proj:'#f87171',task:'#fecaca'}, 'Done':{proj:'#8b5cf6',task:'#ddd6fe'} };
+var STATUS_ORDER=['Planned','In Progress','Blocked','Done'];
 
 /* Demo seed */
 var seed=(function(){ var a=new Date(); return [
@@ -259,272 +241,157 @@ var seed=(function(){ var a=new Date(); return [
 ];})();
 
 /* Ensurers */
-function ensureClient(name){ var key=(name&&name.trim())? name.trim(): '(未設定)'; if(!state.clients[key]){ state.clients[key]={ company:key, person:'', phone:'', email:'', address:'', terms:'' }; } return key; }
-function ensureProject(name){ var key=(name&&name.trim())? name.trim(): '(未分類)'; if(!state.projects[key]){ state.projects[key]={ name:key, start:'', end:'', notes:'', progress:0, status:'Planned' }; } return key; }
+function ensureClient(name){ var key=(name&&name.trim())?name.trim():'(未設定)'; if(!state.clients[key]) state.clients[key]={company:key,person:'',phone:'',email:'',address:'',terms:''}; return key; }
+function ensureProject(name){ var key=(name&&name.trim())?name.trim():'(未分類)'; if(!state.projects[key]) state.projects[key]={name:key,start:'',end:'',notes:'',progress:0,status:'Planned'}; return key; }
 
 /* Load/Save */
 function load(){
-  try{
-    var s=JSON.parse(localStorage.getItem(storeKey)||'{}');
-    if(s && s.tasks){ state=s; } else { state.tasks=seed; }
-  }catch(e){ state.tasks=seed; }
-
-  // monthAnchor（Dateに戻す）
-  state.monthAnchor = new Date(state.monthAnchor || Date.now());
-  if (isNaN(state.monthAnchor)) state.monthAnchor = new Date();
-
-  var th=localStorage.getItem(themeKey);
-  if(th==='dark'){ document.documentElement.classList.add('dark'); }
-
-  for(var i=0;i<state.tasks.length;i++){
-    ensureClient(state.tasks[i].client);
-    ensureProject(state.tasks[i].project);
-  }
+  try{ var s=JSON.parse(localStorage.getItem(storeKey)||'{}'); if(s && s.tasks){ state=s; } else { state.tasks=seed; } }catch(e){ state.tasks=seed; }
+  state.monthAnchor=new Date(state.monthAnchor||Date.now()); if(isNaN(state.monthAnchor)) state.monthAnchor=new Date();
+  var th=localStorage.getItem(themeKey); if(th==='dark'){ document.documentElement.classList.add('dark'); }
+  for(var i=0;i<state.tasks.length;i++){ ensureClient(state.tasks[i].client); ensureProject(state.tasks[i].project); }
 }
 function save(){ localStorage.setItem(storeKey, JSON.stringify(state)); }
 
 /* Summary */
 function renderSummary(){
   var t=new Date(); var todayStr=fmt(t);
-  var dueToday=state.tasks.filter(function(x){ return x.start<=todayStr && x.end>=todayStr && x.status!=='Done'; });
-  var overdue=state.tasks.filter(function(x){ return isOverdue(x); });
-  var inprog=state.tasks.filter(function(x){ return x.status==='In Progress'; });
-  var el=document.getElementById('summary');
-  el.innerHTML='<span class="pill">今日 '+dueToday.length+'</span>'+
-               '<span class="pill">進行中 '+inprog.length+'</span>'+
-               '<span class="pill" style="color:#b91c1c;border-color:#fecaca;background:#fee2e2">期限切れ '+overdue.length+'</span>';
+  var dueToday=state.tasks.filter(x=>x.start<=todayStr && x.end>=todayStr && x.status!=='Done');
+  var overdue=state.tasks.filter(isOverdue);
+  var inprog=state.tasks.filter(x=>x.status==='In Progress');
+  document.getElementById('summary').innerHTML=
+    '<span class="pill">今日 '+dueToday.length+'</span>'+
+    '<span class="pill">進行中 '+inprog.length+'</span>'+
+    '<span class="pill" style="color:#b91c1c;border-color:#fecaca;background:#fee2e2">期限切れ '+overdue.length+'</span>';
 }
 
-/* Days */
+/* Days header */
 function renderDays(){
   var root=document.getElementById('days'); root.innerHTML='';
-  var y=state.monthAnchor.getFullYear(); var m=state.monthAnchor.getMonth(); var n=daysInMonth(state.monthAnchor);
-  for(var i=1;i<=n;i++){
-    var d=new Date(y,m,i);
-    var div=document.createElement('div'); div.className='day'; div.textContent=(m+1)+'/'+i;
-    var dow=document.createElement('span'); dow.className='dow'; dow.textContent='日月火水木金土'.charAt(d.getDay());
-    div.appendChild(dow); root.appendChild(div);
-  }
+  var y=state.monthAnchor.getFullYear(), m=state.monthAnchor.getMonth(), n=daysInMonth(state.monthAnchor);
+  for(var i=1;i<=n;i++){ var d=new Date(y,m,i); var div=document.createElement('div'); div.className='day'; div.textContent=(m+1)+'/'+i; var dow=document.createElement('span'); dow.className='dow'; dow.textContent='日月火水木金土'.charAt(d.getDay()); div.appendChild(dow); root.appendChild(div); }
 }
 
 /* Status palette */
 function renderStatusFilters(){
   var host=document.getElementById('statusFilters'); host.innerHTML='';
-  for(var i=0;i<STATUS_ORDER.length;i++){
-    (function(name){
-      var chip=document.createElement('button'); chip.className='chip status-chip'; chip.setAttribute('data-status', name);
-      var flag=document.createElement('span'); flag.className='flag'; flag.style.color=COLORS[name].proj;
-      var label=document.createElement('span'); label.textContent=name;
-      chip.appendChild(flag); chip.appendChild(label);
-      if(state.statusFilter===name) chip.classList.add('active');
-      chip.onclick=function(){
-        state.statusFilter = (state.statusFilter===name ? 'all' : name);
-        save(); renderAll();
-      };
-      host.appendChild(chip);
-    })(STATUS_ORDER[i]);
-  }
+  STATUS_ORDER.forEach(function(name){
+    var chip=document.createElement('button'); chip.className='chip status-chip'; chip.setAttribute('data-status',name);
+    var flag=document.createElement('span'); flag.className='flag'; flag.style.color=COLORS[name].proj;
+    var label=document.createElement('span'); label.textContent=name;
+    chip.appendChild(flag); chip.appendChild(label);
+    if(state.statusFilter===name) chip.classList.add('active');
+    chip.onclick=function(){ state.statusFilter=(state.statusFilter===name?'all':name); save(); renderAll(); };
+    host.appendChild(chip);
+  });
 }
 
 /* Filters */
-function isOverdue(t){
-  const e = safeParse(t.end);
-  if(!e) return false;
-  return e < new Date() && t.status!=='Done';
-}
+function isOverdue(t){ const e=safeParse(t.end); return e && e<new Date() && t.status!=='Done'; }
 function taskPassPreset(t){
-  var today=new Date(), s=safeParse(t.start), e=safeParse(t.end);
-  if(!s || !e) return false;
+  var today=new Date(), s=safeParse(t.start), e=safeParse(t.end); if(!s||!e) return false;
   if(state.preset==='today') return s<=today && e>=today;
   if(state.preset==='week'){ var a=startOfWeek(today), b=addDays(a,6); return e>=a && s<=b; }
   if(state.preset==='overdue') return isOverdue(t);
   return true;
 }
-function taskPassClient(t){
-  var cn=(t.client&&t.client.trim())?t.client:'(未設定)';
-  return state.client==='all' ? true : cn===state.client;
-}
-function taskPassStatus(t, projStatus){
-  if(state.statusFilter==='all') return true;
-  return (t.status===state.statusFilter) || (projStatus===state.statusFilter);
-}
-function filteredTasks(){
-  return state.tasks.filter(function(t){
-    var p = state.projects[t.project] || {status:'Planned'};
-    return taskPassClient(t) && taskPassPreset(t) && taskPassStatus(t, p.status);
-  });
-}
+function taskPassClient(t){ var cn=(t.client&&t.client.trim())?t.client:'(未設定)'; return state.client==='all'?true:cn===state.client; }
+function taskPassStatus(t,projStatus){ if(state.statusFilter==='all') return true; return (t.status===state.statusFilter)||(projStatus===state.statusFilter); }
+function filteredTasks(){ return state.tasks.filter(t=>taskPassClient(t)&&taskPassPreset(t)&&taskPassStatus(t,(state.projects[t.project]||{status:'Planned'}).status)); }
 
 /* Group & range */
-function groupByProject(tasks){
-  var map={}; for(var i=0;i<tasks.length;i++){ var p=tasks[i].project||'(未分類)'; if(!map[p]) map[p]=[]; map[p].push(tasks[i]); }
-  return map;
-}
-function computeProjectRange(projectName, tasks){
-  if(!tasks || !tasks.length) return {start:'', end:''};
-  var minS=null, maxE=null;
-  for(var i=0;i<tasks.length;i++){
-    var s=safeParse(tasks[i].start), e=safeParse(tasks[i].end);
-    if(!s || !e) continue;
-    var sStr=fmt(s), eStr=fmt(e);
-    if(!minS || sStr<minS) minS=sStr;
-    if(!maxE || eStr>maxE) maxE=eStr;
-  }
-  if(!minS || !maxE){ minS=''; maxE=''; }
-  var key=ensureProject(projectName);
-  state.projects[key].start=minS; state.projects[key].end=maxE;
-  return {start:minS, end:maxE};
+function groupByProject(tasks){ var map={}; tasks.forEach(t=>{ var p=t.project||'(未分類)'; (map[p]=map[p]||[]).push(t); }); return map; }
+function computeProjectRange(projectName,tasks){
+  if(!tasks||!tasks.length) return {start:'',end:''};
+  var minS=null,maxE=null;
+  for(var i=0;i<tasks.length;i++){ var s=safeParse(tasks[i].start), e=safeParse(tasks[i].end); if(!s||!e) continue; var ss=fmt(s), ee=fmt(e); if(!minS||ss<minS) minS=ss; if(!maxE||ee>maxE) maxE=ee; }
+  var key=ensureProject(projectName); state.projects[key].start=minS||''; state.projects[key].end=maxE||''; return {start:minS||'',end:maxE||''};
 }
 
-/* === ピクセル正確配置（ズレ防止版） === */
+/* ピクセル正確配置（ズレ防止） */
 function placeBarPx(rail, bar, index, span){
-  const cells = rail.querySelectorAll('.cell');
-  const total = cells.length;
-  if(!total){ return; }
-
-  const s = Math.max(0, Math.min(index, total-1));
-  const e = Math.max(s, Math.min(index+span-1, total-1));
-
-  const railRect = rail.getBoundingClientRect();
-  const sRect = cells[s].getBoundingClientRect();
-  const eRect = cells[e].getBoundingClientRect();
-
-  let left  = Math.round(sRect.left - railRect.left + rail.scrollLeft);
-  let width = Math.max(1, Math.round(eRect.right - sRect.left));
-
-  // フォールバック（計測失敗時は% + ギャップ補正）
-  if(!isFinite(left) || width<=0){
-    const totalDays = total;
-    bar.style.left  = `calc(${index}*(100%/${totalDays}) + ${(index*4)}px)`;
-    bar.style.width = `calc(${span}*(100%/${totalDays}) + ${((span-1)*4)}px)`;
-    return;
-  }
-  bar.style.left  = left + 'px';
-  bar.style.width = width + 'px';
+  const cells=rail.querySelectorAll('.cell'); const total=cells.length; if(!total) return;
+  const s=Math.max(0,Math.min(index,total-1)); const e=Math.max(s,Math.min(index+span-1,total-1));
+  const railRect=rail.getBoundingClientRect(), sRect=cells[s].getBoundingClientRect(), eRect=cells[e].getBoundingClientRect();
+  let left=Math.round(sRect.left-railRect.left+rail.scrollLeft), width=Math.max(1,Math.round(eRect.right-sRect.left));
+  if(!isFinite(left)||width<=0){ bar.style.left=`calc(${index}*(100%/${total}) + ${(index*4)}px)`; bar.style.width=`calc(${span}*(100%/${total}) + ${((span-1)*4)}px)`; return; }
+  bar.style.left=left+'px'; bar.style.width=width+'px';
 }
 
-/* 月内に収まる範囲を返す */
+/* 月内に収める */
 function clampToMonth(startStr,endStr){
-  const start = safeParse(startStr), end = safeParse(endStr);
-  if(!start || !end) return null;
-
+  const start=safeParse(startStr), end=safeParse(endStr); if(!start||!end) return null;
   const y=state.monthAnchor.getFullYear(), m=state.monthAnchor.getMonth();
   const first=new Date(y,m,1), last=new Date(y,m,daysInMonth(state.monthAnchor));
-  if(end < first || start > last) return null;
-
-  const s = start < first ? first : start;
-  const e = end   > last  ? last  : end;
-
-  const total = daysInMonth(state.monthAnchor);
-  const index = Math.max(0, Math.floor((s-first)/86400000));
-  const span  = Math.max(1, Math.floor((e-first)/86400000)-index+1);
-  return { index, span, total };
+  if(end<first||start>last) return null;
+  const s=start<first?first:start, e=end>last?last:end;
+  const total=daysInMonth(state.monthAnchor);
+  const index=Math.max(0,Math.floor((s-first)/86400000));
+  const span=Math.max(1,Math.floor((e-first)/86400000)-index+1);
+  return {index,span,total};
 }
 
-/* Gantt */
+/* Gantt render */
 function renderGroups(){
   var root=document.getElementById('groups'); root.innerHTML='';
-  var tasks = filteredTasks();
-  if(!tasks.length){
-    var empty=document.createElement('div'); empty.className='card';
-    empty.textContent='該当タスクがありません。上の入力から追加してください。';
-    root.appendChild(empty); return;
-  }
-  var total=daysInMonth(state.monthAnchor);
-  var map = groupByProject(tasks);
-  var projects = Object.keys(map).sort();
+  var tasks=filteredTasks(); if(!tasks.length){ var empty=document.createElement('div'); empty.className='card'; empty.textContent='該当タスクがありません。上の入力から追加してください。'; root.appendChild(empty); return; }
+  var total=daysInMonth(state.monthAnchor), map=groupByProject(tasks), projects=Object.keys(map).sort();
 
-  for(var i=0;i<projects.length;i++){
-    (function(projectName){
-      var list=map[projectName];
-      var client = (list[0] && list[0].client) ? list[0].client : '(未設定)';
-      var pKey=ensureProject(projectName);
-      var pObj=state.projects[pKey]||{status:'Planned'}; var pStatus=pObj.status||'Planned';
-      var col = COLORS[pStatus] || COLORS['Planned'];
+  projects.forEach(function(projectName){
+    var list=map[projectName], client=(list[0]&&list[0].client)?list[0].client:'(未設定)';
+    var pKey=ensureProject(projectName), pObj=state.projects[pKey]||{status:'Planned'}, pStatus=pObj.status||'Planned', col=COLORS[pStatus]||COLORS['Planned'];
+    var pr=computeProjectRange(projectName,list);
 
-      var pr = computeProjectRange(projectName, list);
+    var group=document.createElement('div'); group.className='group';
+    var head=document.createElement('div'); head.className='grouphead';
+    var tl=document.createElement('div'); tl.innerHTML='<b>'+projectName+'</b> <span class="groupmeta">/ '+client+'</span>';
+    var tr=document.createElement('div'); tr.className='groupmeta'; tr.textContent=pStatus+'  '+(pr.start||'')+' → '+(pr.end||''); head.appendChild(tl); head.appendChild(tr); group.appendChild(head);
 
-      var group=document.createElement('div'); group.className='group';
-      var head=document.createElement('div'); head.className='grouphead';
-      var tl=document.createElement('div'); tl.innerHTML='<b>'+projectName+'</b> <span class="groupmeta">/ '+client+'</span>';
-      var tr=document.createElement('div'); tr.className='groupmeta'; tr.textContent=pStatus+'  '+(pr.start||'')+' → '+(pr.end||'');
-      head.appendChild(tl); head.appendChild(tr);
-      group.appendChild(head);
+    var railP=document.createElement('div'); railP.className='rail'; railP.style.gridTemplateColumns='repeat('+total+', minmax(36px,1fr))';
+    for(var c=0;c<total;c++){ var cell=document.createElement('div'); cell.className='cell'; railP.appendChild(cell); }
+    group.appendChild(railP);
 
-      // 案件バー
-      var railP=document.createElement('div'); railP.className='rail';
-      railP.style.gridTemplateColumns='repeat('+total+', minmax(36px,1fr))';
-      for(var c=0;c<total;c++){ var cell=document.createElement('div'); cell.className='cell'; railP.appendChild(cell); }
-      group.appendChild(railP);
+    var posP=clampToMonth(pr.start,pr.end);
+    if(posP){ var barP=document.createElement('div'); barP.className='pbar'; barP.style.background=col.proj; barP.textContent='案件'; railP.appendChild(barP); requestAnimationFrame(()=>placeBarPx(railP,barP,posP.index,posP.span)); }
 
-      var posP = clampToMonth(pr.start, pr.end);
-      if (posP) {
-        var barP=document.createElement('div'); barP.className='pbar';
-        barP.style.background=col.proj; barP.textContent='案件';
-        railP.appendChild(barP);
-        requestAnimationFrame(function(){ placeBarPx(railP, barP, posP.index, posP.span); });
-      }
+    list.forEach(function(task){
+      var rail=document.createElement('div'); rail.className='rail'; rail.style.gridTemplateColumns='repeat('+total+', minmax(36px,1fr))';
+      for(var c=0;c<total;c++){ var cell2=document.createElement('div'); cell2.className='cell'; rail.appendChild(cell2); }
+      group.appendChild(rail);
+      var pos=clampToMonth(task.start,task.end); if(!pos) return;
+      var bar=document.createElement('div'); bar.className='tbar'; bar.style.background=col.task; bar.title=task.title+' '+task.start+' → '+task.end; bar.textContent=task.title+' ('+task.progress+'%)';
+      bar.onclick=function(){ state.selectedId=task.id; openDetailPanel(task.id); save(); renderPanels(); };
+      rail.appendChild(bar);
+      requestAnimationFrame(()=>placeBarPx(rail,bar,pos.index,pos.span));
+    });
 
-      // タスクバー
-      for(var t=0;t<list.length;t++){
-        (function(task){
-          var rail=document.createElement('div'); rail.className='rail';
-          rail.style.gridTemplateColumns='repeat('+total+', minmax(36px,1fr))';
-          for(var c=0;c<total;c++){ var cell2=document.createElement('div'); cell2.className='cell'; rail.appendChild(cell2); }
-          group.appendChild(rail);
-
-          var pos = clampToMonth(task.start, task.end);
-          if (!pos) return;
-
-          var bar=document.createElement('div'); bar.className='tbar';
-          bar.style.background=col.task;
-          bar.title=task.title+' '+task.start+' → '+task.end;
-          bar.textContent=task.title+' ('+task.progress+'%)';
-          bar.onclick=function(){ state.selectedId=task.id; openDetailPanel(task.id); save(); renderPanels(); };
-          rail.appendChild(bar);
-          requestAnimationFrame(function(){ placeBarPx(rail, bar, pos.index, pos.span); });
-        })(list[t]);
-      }
-
-      root.appendChild(group);
-    })(projects[i]);
-  }
+    root.appendChild(group);
+  });
 }
 
 /* Panels orchestrator */
 function renderPanels(){ renderClientPanel(); renderProjectPanel(); renderDetailStrip(); }
 
-/* Client panel helpers */
-function listAllClients(){ var map={}, out=[], k; for(var i=0;i<state.tasks.length;i++){ k=ensureClient(state.tasks[i].client); if(!map[k]){ map[k]=true; out.push(k); } } for(k in state.clients){ if(state.clients.hasOwnProperty(k) && !map[k]){ map[k]=true; out.push(k); } } return out; }
-function listAllProjects(){ var map={}, out=[], k; for(var i=0;i<state.tasks.length;i++){ k=ensureProject(state.tasks[i].project); if(!map[k]){ map[k]=true; out.push(k); } } for(k in state.projects){ if(state.projects.hasOwnProperty(k) && !map[k]){ map[k]=true; out.push(k); } } return out; }
-function currentTask(){ for(var i=0;i<state.tasks.length;i++){ if(state.tasks[i].id===state.selectedId){ return state.tasks[i]; } } return null; }
-function activeClientKey(){ var t=currentTask(); if(t && t.client){ return ensureClient(t.client); } if(state.client!=='all'){ return ensureClient(state.client); } var arr=listAllClients(); return arr.length? arr[0] : ensureClient('(未設定)'); }
+/* Client helpers & panel */
+function listAllClients(){ var map={},out=[],k; for(var i=0;i<state.tasks.length;i++){ k=ensureClient(state.tasks[i].client); if(!map[k]){ map[k]=true; out.push(k);} } for(k in state.clients){ if(state.clients.hasOwnProperty(k)&&!map[k]){ map[k]=true; out.push(k);} } return out; }
+function listAllProjects(){ var map={},out=[],k; for(var i=0;i<state.tasks.length;i++){ k=ensureProject(state.tasks[i].project); if(!map[k]){ map[k]=true; out.push(k);} } for(k in state.projects){ if(state.projects.hasOwnProperty(k)&&!map[k]){ map[k]=true; out.push(k);} } return out; }
+function currentTask(){ for(var i=0;i<state.tasks.length;i++){ if(state.tasks[i].id===state.selectedId) return state.tasks[i]; } return null; }
+function activeClientKey(){ var t=currentTask(); if(t&&t.client) return ensureClient(t.client); if(state.client!=='all') return ensureClient(state.client); var arr=listAllClients(); return arr.length?arr[0]:ensureClient('(未設定)'); }
 
-/* Client panel */
 function renderClientPanel(){
   var select=document.getElementById('pClientSelect');
   var company=document.getElementById('pCompany'), person=document.getElementById('pPerson'), phone=document.getElementById('pPhone'), email=document.getElementById('pEmail'), address=document.getElementById('pAddress'), terms=document.getElementById('pTerms');
   var saveBtn=document.getElementById('pSave');
-  var all=listAllClients(), act=activeClientKey(), html='';
-  for(var i=0;i<all.length;i++){ var v=all[i]; html+='<option value="'+v+'"'+(v===act?' selected':'')+'>'+v+'</option>'; }
+  var all=listAllClients(), act=activeClientKey(), html=''; for(var i=0;i<all.length;i++){ var v=all[i]; html+='<option value="'+v+'"'+(v===act?' selected':'')+'>'+v+'</option>'; }
   select.innerHTML=html;
   var data=state.clients[act]||ensureClient(act);
   company.value=data.company||act; person.value=data.person||''; phone.value=data.phone||''; email.value=data.email||''; address.value=data.address||''; terms.value=data.terms||'';
   select.onchange=function(){ renderClientPanel(); };
-  saveBtn.onclick=function(){
-    var key=select.value; ensureClient(key);
-    state.clients[key].company=company.value.trim();
-    state.clients[key].person=person.value.trim();
-    state.clients[key].phone=phone.value.trim();
-    state.clients[key].email=email.value.trim();
-    state.clients[key].address=address.value.trim();
-    state.clients[key].terms=terms.value.trim();
-    save(); alert('クライアント情報を保存しました。');
-  };
+  saveBtn.onclick=function(){ var key=select.value; ensureClient(key); Object.assign(state.clients[key],{company:company.value.trim(),person:person.value.trim(),phone:phone.value.trim(),email:email.value.trim(),address:address.value.trim(),terms:terms.value.trim()}); save(); alert('クライアント情報を保存しました。'); };
 }
 
 /* Project panel */
-function activeProjectKey(){ var t=currentTask(); if(t && t.project){ return ensureProject(t.project); } return ensureProject('(未分類)'); }
+function activeProjectKey(){ var t=currentTask(); return ensureProject(t&&t.project?t.project:'(未分類)'); }
 function renderProjectPanel(){
   var t=currentTask(), key=activeProjectKey(), data=state.projects[key]||{name:'',start:'',end:'',notes:'',progress:0,status:'Planned'};
   var nameEl=document.getElementById('prjName'), sEl=document.getElementById('prjStart'), eEl=document.getElementById('prjEnd'), notesEl=document.getElementById('prjNotes'), prog=document.getElementById('prjProg'), status=document.getElementById('prjStatus');
@@ -533,23 +400,20 @@ function renderProjectPanel(){
   nameEl.value=data.name||''; sEl.value=data.start||''; eEl.value=data.end||''; notesEl.value=data.notes||''; prog.value=data.progress||0; status.value=data.status||'Planned';
 
   saveBtn.onclick=function(){
-    var oldKey=key, newName=(nameEl.value.trim()||'(未分類)'), newKey=ensureProject(newName);
-    var pj=state.projects[newKey];
-    pj.name=newName; pj.start=sEl.value; pj.end=eEl.value; pj.notes=notesEl.value; pj.progress=Number(prog.value||0); pj.status=status.value;
+    var oldKey=key, newName=(nameEl.value.trim()||'(未分類)'), newKey=ensureProject(newName), pj=state.projects[newKey];
+    Object.assign(pj,{name:newName,start:sEl.value,end:eEl.value,notes:notesEl.value,progress:Number(prog.value||0),status:status.value});
     if(t && t.project!==newName){ t.project=newName; }
     if(oldKey!==newKey && state.projects[oldKey] && oldKey!=='(未分類)'){ delete state.projects[oldKey]; }
     save(); renderGroups(); renderStatusFilters();
   };
 
   invBtn.onclick=function(){
-    var clientKey = activeClientKey(), ci = state.clients[clientKey]||{};
-    var title = nameEl.value||'(無題案件)', s=sEl.value||'', e=eEl.value||'';
+    var clientKey=activeClientKey(), ci=state.clients[clientKey]||{}, title=nameEl.value||'(無題案件)', s=sEl.value||'', e=eEl.value||'';
     var w=window.open('','_blank'); if(!w) return;
-    var billTo = '<p><b>請求先:</b> '+(ci.company||clientKey)+'<br/>'+(ci.person?('<b>ご担当:</b> '+ci.person+'<br/>'):'')+(ci.phone?('<b>電話:</b> '+ci.phone+'<br/>'):'')+(ci.address?('<b>住所:</b> '+ci.address+'<br/>'):'')+(ci.email?('<b>Email:</b> '+ci.email+'<br/>'):'')+(ci.terms?('<b>支払条件:</b> '+ci.terms+'<br/>'):'')+'</p>';
+    var billTo='<p><b>請求先:</b> '+(ci.company||clientKey)+'<br/>'+(ci.person?('<b>ご担当:</b> '+ci.person+'<br/>'):'')+(ci.phone?('<b>電話:</b> '+ci.phone+'<br/>'):'')+(ci.address?('<b>住所:</b> '+ci.address+'<br/>'):'')+(ci.email?('<b>Email:</b> '+ci.email+'<br/>'):'')+(ci.terms?('<b>支払条件:</b> '+ci.terms+'<br/>'):'')+'</p>';
     var html='<!doctype html><html lang="ja"><head><meta charset="utf-8"/><title>Invoice - '+title+'</title>'+
       '<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;padding:24px} h1{margin:0 0 8px} table{border-collapse:collapse;width:100%} td,th{border:1px solid #ddd;padding:8px} .r{text-align:right}</style></head><body>'+
-      '<h1>請求書</h1>'+billTo+
-      '<p><b>案件:</b> '+title+'　<b>期間:</b> '+s+' 〜 '+e+'</p>'+
+      '<h1>請求書</h1>'+billTo+'<p><b>案件:</b> '+title+'　<b>期間:</b> '+s+' 〜 '+e+'</p>'+
       '<table><thead><tr><th>内容</th><th class="r">数量</th><th class="r">単価</th><th class="r">金額</th></tr></thead>'+
       '<tbody><tr><td>'+title+'</td><td class="r">1</td><td class="r">¥50,000</td><td class="r">¥50,000</td></tr></tbody>'+
       '<tfoot><tr><th colspan="3" class="r">小計</th><th class="r">¥50,000</th></tr></tfoot></table>'+
@@ -570,75 +434,39 @@ function visibleTaskIds(){
   var ids={}, list=filteredTasks();
   var y=state.monthAnchor.getFullYear(), m=state.monthAnchor.getMonth();
   var first=new Date(y,m,1), last=new Date(y,m,daysInMonth(state.monthAnchor));
-  for(var i=0;i<list.length;i++){
-    const s = safeParse(list[i].start), e = safeParse(list[i].end);
-    if(!s || !e) continue;
-    if(!(e<first || s>last)){ ids[list[i].id]=1; }
-  }
+  for(var i=0;i<list.length;i++){ var s=safeParse(list[i].start), e=safeParse(list[i].end); if(!s||!e) continue; if(!(e<first||s>last)) ids[list[i].id]=1; }
   return ids;
 }
 function openDetailPanel(id){ if(state.openDetails.indexOf(id)===-1){ state.openDetails.push(id); save(); } renderDetailStrip(); }
 function findTask(id){ for(var i=0;i<state.tasks.length;i++){ if(state.tasks[i].id===id) return state.tasks[i]; } return null; }
-function updateTask(id, patch){ for(var i=0;i<state.tasks.length;i++){ if(state.tasks[i].id===id){ for(var k in patch){ state.tasks[i][k]=patch[k]; } break; } } save(); }
+function updateTask(id,patch){ for(var i=0;i<state.tasks.length;i++){ if(state.tasks[i].id===id){ for(var k in patch){ state.tasks[i][k]=patch[k]; } break; } } save(); }
 function renderDetailStrip(){
-  var wrap=document.getElementById('detailStrip'); var hint=document.getElementById('detailHint');
-  wrap.innerHTML='';
-  var vis=visibleTaskIds(); var shown=0;
+  var wrap=document.getElementById('detailStrip'), hint=document.getElementById('detailHint'); wrap.innerHTML=''; var vis=visibleTaskIds(), shown=0;
   for(var i=0;i<state.openDetails.length;i++){
     var id=state.openDetails[i]; if(!vis[id]) continue; var t=findTask(id); if(!t) continue; shown++;
-
     var card=document.createElement('div'); card.className='dcard';
     var top=document.createElement('div'); top.className='row'; top.style.justifyContent='space-between';
     var h4=document.createElement('h4'); h4.textContent='['+(t.client||'(未設定)')+'] '+t.title;
-    var close=document.createElement('button'); close.className='btn'; close.textContent='×';
-    (function(k){ close.onclick=function(){ var ix=state.openDetails.indexOf(k); if(ix>=0){ state.openDetails.splice(ix,1); save(); renderDetailStrip(); } }; })(id);
+    var close=document.createElement('button'); close.className='btn'; close.textContent='×'; (function(k){ close.onclick=function(){ var ix=state.openDetails.indexOf(k); if(ix>=0){ state.openDetails.splice(ix,1); save(); renderDetailStrip(); } }; })(id);
     top.appendChild(h4); top.appendChild(close); card.appendChild(top);
-
     var drow=document.createElement('div'); drow.className='drow';
     var a=document.createElement('div'); a.innerHTML='<div class="lbl">期間</div><div class="drow"><input type="date" class="input" id="d_s_'+id+'"><input type="date" class="input" id="d_e_'+id+'"></div>';
-    var spacer=document.createElement('div'); spacer.innerHTML='';
-    drow.appendChild(a); drow.appendChild(spacer); card.appendChild(drow);
-
+    drow.appendChild(a); drow.appendChild(document.createElement('div')); card.appendChild(drow);
     var inline=document.createElement('div'); inline.className='inlineStat';
-    var left=document.createElement('div'); left.className='left';
-    left.innerHTML='<div class="lbl">進捗％</div><input type="range" min="0" max="100" class="input" id="d_prog_'+id+'">';
+    var left=document.createElement('div'); left.className='left'; left.innerHTML='<div class="lbl">進捗％</div><input type="range" min="0" max="100" class="input" id="d_prog_'+id+'">';
     var val=document.createElement('div'); val.className='meta progVal'; val.id='d_prog_txt_'+id; val.textContent=t.progress+'%';
     var statWrap=document.createElement('div'); statWrap.className='statSel'; statWrap.innerHTML='<div class="lbl">ステータス</div><select class="input" id="d_stat_'+id+'"><option>Planned</option><option>In Progress</option><option>Blocked</option><option>Done</option></select>';
-    inline.appendChild(left); inline.appendChild(val); inline.appendChild(statWrap);
-    card.appendChild(inline);
-
-    var memo=document.createElement('div'); memo.innerHTML='<div class="lbl">やり取りメモ</div><textarea rows="3" class="input" id="d_memo_'+id+'"></textarea><div class="row" style="justify-content:flex-end"><button class="btn" id="d_save_'+id+'">保存</button></div>';
-    card.appendChild(memo);
-
+    inline.appendChild(left); inline.appendChild(val); inline.appendChild(statWrap); card.appendChild(inline);
+    var memo=document.createElement('div'); memo.innerHTML='<div class="lbl">やり取りメモ</div><textarea rows="3" class="input" id="d_memo_'+id+'"></textarea><div class="row" style="justify-content:flex-end"><button class="btn" id="d_save_'+id+'">保存</button></div>'; card.appendChild(memo);
     wrap.appendChild(card);
-
-    // bind
-    document.getElementById('d_s_'+id).value=t.start;
-    document.getElementById('d_e_'+id).value=t.end;
-    document.getElementById('d_stat_'+id).value=t.status;
-    document.getElementById('d_prog_'+id).value=t.progress;
+    document.getElementById('d_s_'+id).value=t.start; document.getElementById('d_e_'+id).value=t.end; document.getElementById('d_stat_'+id).value=t.status; document.getElementById('d_prog_'+id).value=t.progress;
     document.getElementById('d_prog_'+id).oninput=(function(taskId){return function(e){ var v=parseInt(e.target.value,10); updateTask(taskId,{progress:v}); document.getElementById('d_prog_txt_'+taskId).textContent=v+'%'; renderGroups(); };})(id);
-
-    document.getElementById('d_s_'+id).onchange=(function(taskId){return function(e){
-      const v=e.target.value;
-      if(!isYMD(v)) { e.target.value=findTask(taskId).start; return; }
-      const t=findTask(taskId); const endVal=t.end;
-      updateTask(taskId,{start:v, end: (isYMD(endVal) && endVal>=v)? endVal : v});
-      renderGroups();
-    };})(id);
-
-    document.getElementById('d_e_'+id).onchange=(function(taskId){return function(e){
-      const v=e.target.value;
-      if(!isYMD(v)) { e.target.value=findTask(taskId).end; return; }
-      const t=findTask(taskId); const startVal=t.start;
-      updateTask(taskId,{end: (isYMD(startVal) && v>=startVal)? v : startVal});
-      renderGroups();
-    };})(id);
-
+    document.getElementById('d_s_'+id).onchange=(function(taskId){return function(e){ const v=e.target.value; if(!isYMD(v)){ e.target.value=findTask(taskId).start; return; } const t=findTask(taskId), endVal=t.end; updateTask(taskId,{start:v, end:(isYMD(endVal)&&endVal>=v)?endVal:v}); renderGroups(); };})(id);
+    document.getElementById('d_e_'+id).onchange=(function(taskId){return function(e){ const v=e.target.value; if(!isYMD(v)){ e.target.value=findTask(taskId).end; return; } const t=findTask(taskId), startVal=t.start; updateTask(taskId,{end:(isYMD(startVal)&&v>=startVal)?v:startVal}); renderGroups(); };})(id);
     document.getElementById('d_stat_'+id).onchange=(function(taskId){return function(e){ updateTask(taskId,{status:e.target.value}); renderGroups(); };})(id);
     document.getElementById('d_save_'+id).onclick=(function(taskId){return function(){ var v=document.getElementById('d_memo_'+taskId).value.trim(); if(v){ var tt=findTask(taskId); tt.memos=tt.memos||[]; tt.memos.push(fmtTS(new Date())+'  '+v); save(); document.getElementById('d_memo_'+taskId).value=''; alert('保存しました'); } }})(id);
   }
-  hint.style.display = shown? 'none':'block';
+  hint.style.display=shown?'none':'block';
 }
 
 /* Sidebar */
@@ -646,94 +474,57 @@ function bindSidebar(){
   var navBtns=document.querySelectorAll('#nav [data-nav]');
   for(var i=0;i<navBtns.length;i++){ (function(btn){
     var key=btn.getAttribute('data-nav');
-    btn.classList.toggle('active',
-      (key==='today'&&state.preset==='today')||(key==='week'&&state.preset==='week')||(key==='overdue'&&state.preset==='overdue'));
-    btn.onclick=function(){
-      if(key==='inbox'){ showInbox(); return; }
-      if(key==='done'){ showDone(); return; }
-      state.preset=key; state.client='all'; state.selectedId=null; save();
-      for(var j=0;j<navBtns.length;j++){ navBtns[j].classList.remove('active'); } btn.classList.add('active');
-      renderSummary(); renderDays(); renderGroups(); renderPanels();
-    };
+    btn.classList.toggle('active',(key==='today'&&state.preset==='today')||(key==='week'&&state.preset==='week')||(key==='overdue'&&state.preset==='overdue'));
+    btn.onclick=function(){ if(key==='inbox'){ showInbox(); return; } if(key==='done'){ showDone(); return; } state.preset=key; state.client='all'; state.selectedId=null; save(); for(var j=0;j<navBtns.length;j++){ navBtns[j].classList.remove('active'); } btn.classList.add('active'); renderSummary(); renderDays(); renderGroups(); renderPanels(); };
   })(navBtns[i]); }
 
   var area=document.getElementById('navClients'); area.innerHTML='<button class="chip" data-client="all">全クライアント</button>';
-  var exists={}, order=[];
-  for(var k=0;k<state.tasks.length;k++){ var c=(state.tasks[k].client&&state.tasks[k].client.trim())? state.tasks[k].client: '(未設定)'; if(!exists[c]){ exists[c]=true; order.push(c); } }
-  for(var o=0;o<order.length;o++){ var cName=order[o]; var b=document.createElement('button'); b.className='chip'; b.textContent=cName; b.setAttribute('data-client', cName); area.appendChild(b); }
+  var exists={}, order=[]; for(var k=0;k<state.tasks.length;k++){ var c=(state.tasks[k].client&&state.tasks[k].client.trim())?state.tasks[k].client:'(未設定)'; if(!exists[c]){ exists[c]=true; order.push(c); } }
+  for(var o=0;o<order.length;o++){ var cName=order[o]; var b=document.createElement('button'); b.className='chip'; b.textContent=cName; b.setAttribute('data-client',cName); area.appendChild(b); }
   var cBtns=area.querySelectorAll('[data-client]');
-  for(var x=0;x<cBtns.length;x++){ (function(btn){
-    btn.classList.toggle('active', (state.client==='all'&&btn.getAttribute('data-client')==='all')||btn.getAttribute('data-client')===state.client);
-    btn.onclick=function(){ state.client=btn.getAttribute('data-client'); state.preset='all'; state.selectedId=null; save(); renderSummary(); renderGroups(); renderPanels(); for(var y=0;y<cBtns.length;y++){ cBtns[y].classList.remove('active'); } btn.classList.add('active'); };
-  })(cBtns[x]); }
+  for(var x=0;x<cBtns.length;x++){ (function(btn){ btn.classList.toggle('active',(state.client==='all'&&btn.getAttribute('data-client')==='all')||btn.getAttribute('data-client')===state.client); btn.onclick=function(){ state.client=btn.getAttribute('data-client'); state.preset='all'; state.selectedId=null; save(); renderSummary(); renderGroups(); renderPanels(); for(var y=0;y<cBtns.length;y++){ cBtns[y].classList.remove('active'); } btn.classList.add('active'); }; })(cBtns[x]); }
 
   renderStatusFilters();
 }
-function showInbox(){ var orig=filteredTasks; filteredTasks=function(){ var now=Date.now(); return state.tasks.filter(function(t){ var created=t.createdAt? Date.parse(t.createdAt): now; var recent=(now-created)<(24*60*60*1000); var noClient=!t.client||t.client.trim()===''; return recent||noClient; }); }; renderGroups(); filteredTasks=orig; renderPanels(); }
+function showInbox(){ var orig=filteredTasks; filteredTasks=function(){ var now=Date.now(); return state.tasks.filter(function(t){ var created=t.createdAt?Date.parse(t.createdAt):now; var recent=(now-created)<(24*60*60*1000); var noClient=!t.client||t.client.trim()===''; return recent||noClient; }); }; renderGroups(); filteredTasks=orig; renderPanels(); }
 function showDone(){ var orig=filteredTasks; filteredTasks=function(){ return state.tasks.filter(function(t){ return t.status==='Done'; }); }; renderGroups(); filteredTasks=orig; renderPanels(); }
 
 /* Header */
-function fillDataLists(){
-  var pList=document.getElementById('projectList'); var cList=document.getElementById('clientList');
-  var ps=listAllProjects(), cs=listAllClients();
-  pList.innerHTML=ps.map(function(n){return '<option value="'+n+'">'}).join('');
-  cList.innerHTML=cs.map(function(n){return '<option value="'+n+'">'}).join('');
-}
+function fillDataLists(){ var pList=document.getElementById('projectList'); var cList=document.getElementById('clientList'); var ps=listAllProjects(), cs=listAllClients(); pList.innerHTML=ps.map(n=>`<option value="${n}">`).join(''); cList.innerHTML=cs.map(n=>`<option value="${n}">`).join(''); }
 function bindHeader(){
   document.getElementById('theme').onclick=function(){ var d=document.documentElement.classList.toggle('dark'); localStorage.setItem(themeKey, d?'dark':'light'); };
-
   document.getElementById('qa-add').onclick=function(){
     var title=document.getElementById('qa-title').value.trim();
     var project=(document.getElementById('qa-project').value.trim()||'(未分類)');
     var client=(document.getElementById('qa-client').value.trim()||'(未設定)');
-    var s=document.getElementById('qa-start').value;
-    var e=document.getElementById('qa-end').value;
+    var s=document.getElementById('qa-start').value, e=document.getElementById('qa-end').value;
     if(!title){ alert('タスク名を入力してください'); return; }
-    if(!isYMD(s)){ s=fmt(new Date()); }
-    if(!isYMD(e)){ e=fmt(addDays(new Date(),3)); }
-    const sd=safeParse(s), ed=safeParse(e);
-    if(!sd || !ed || ed<sd){ alert('終了日は開始日以降にしてください'); return; }
-    var id='t'+Date.now();
-    var t={id:id, title:title, client:client, project:project, start:s, end:e, progress:0, status:'Planned', memos:[], createdAt:new Date().toISOString()};
-    state.tasks.unshift(t);
-    ensureClient(client); ensureProject(project);
-    state.selectedId=id; openDetailPanel(id); save();
-
-    document.getElementById('qa-title').value=''; document.getElementById('qa-project').value=''; document.getElementById('qa-client').value='';
-    document.getElementById('qa-start').value=''; document.getElementById('qa-end').value='';
-    fillDataLists();
-    renderSummary(); renderDays(); renderGroups(); renderPanels();
+    if(!isYMD(s)) s=fmt(new Date()); if(!isYMD(e)) e=fmt(addDays(new Date(),3));
+    const sd=safeParse(s), ed=safeParse(e); if(!sd||!ed||ed<sd){ alert('終了日は開始日以降にしてください'); return; }
+    var id='t'+Date.now(); var t={id, title, client, project, start:s, end:e, progress:0, status:'Planned', memos:[], createdAt:new Date().toISOString()};
+    state.tasks.unshift(t); ensureClient(client); ensureProject(project); state.selectedId=id; openDetailPanel(id); save();
+    document.getElementById('qa-title').value=''; document.getElementById('qa-project').value=''; document.getElementById('qa-client').value=''; document.getElementById('qa-start').value=''; document.getElementById('qa-end').value='';
+    fillDataLists(); renderSummary(); renderDays(); renderGroups(); renderPanels();
   };
-
   document.getElementById('prep').onclick=function(){
     var todayStr=fmt(new Date());
     state.tasks=state.tasks.map(function(t){
       if(t.status==='Done') return t;
-      const sd = safeParse(t.start), ed = safeParse(t.end);
-      if(isYMD(todayStr) && sd && ed && fmt(ed)<=todayStr){
-        return Object.assign({}, t, {
-          start: fmt(addDays(sd,1)),
-          end:   fmt(addDays(ed,1)),
-          status: (t.status==='Blocked'?'In Progress':t.status)
-        });
+      const sd=safeParse(t.start), ed=safeParse(t.end);
+      if(sd&&ed&&fmt(ed)<=todayStr){
+        return Object.assign({},t,{ start:fmt(addDays(sd,1)), end:fmt(addDays(ed,1)), status:(t.status==='Blocked'?'In Progress':t.status) });
       }
       return t;
     });
     save(); renderGroups(); alert('未完了タスクを明日に繰り越しました。');
   };
-
   document.getElementById('remindTonight').onclick=function(){ scheduleTonight(); };
-  document.getElementById('prev').onclick=function(){ state.monthAnchor=new Date(state.monthAnchor.getFullYear(), state.monthAnchor.getMonth()-1, 1); save(); renderDays(); renderGroups(); renderPanels(); };
-  document.getElementById('next').onclick=function(){ state.monthAnchor=new Date(state.monthAnchor.getFullYear(), state.monthAnchor.getMonth()+1, 1); save(); renderDays(); renderGroups(); renderPanels(); };
+  document.getElementById('prev').onclick=function(){ state.monthAnchor=new Date(state.monthAnchor.getFullYear(),state.monthAnchor.getMonth()-1,1); save(); renderDays(); renderGroups(); renderPanels(); };
+  document.getElementById('next').onclick=function(){ state.monthAnchor=new Date(state.monthAnchor.getFullYear(),state.monthAnchor.getMonth()+1,1); save(); renderDays(); renderGroups(); renderPanels(); };
   document.getElementById('reset').onclick=function(){ localStorage.removeItem(storeKey); location.reload(); };
   document.getElementById('seed').onclick=function(){ state.tasks=seed.slice(); for(var i=0;i<state.tasks.length;i++){ ensureClient(state.tasks[i].client); ensureProject(state.tasks[i].project); } save(); fillDataLists(); renderAll(); };
-
-  var cf=document.getElementById('clientFilter'); var clients=listAllClients(); var html='<option value="all">全クライアント</option>'; for(var i=0;i<clients.length;i++){ html+='<option value="'+clients[i]+'">'+clients[i]+'</option>'; } cf.innerHTML=html; cf.value=state.client;
-  cf.onchange=function(e){ state.client=e.target.value; save(); renderGroups(); renderPanels(); };
-
-  var chips=document.querySelectorAll('[data-preset]');
-  for(var j=0;j<chips.length;j++){ (function(btn){ btn.classList.toggle('active', btn.getAttribute('data-preset')===state.preset); btn.onclick=function(){ state.preset=btn.getAttribute('data-preset'); save(); for(var k=0;k<chips.length;k++){ chips[k].classList.remove('active'); } btn.classList.add('active'); renderSummary(); renderGroups(); renderPanels(); }; })(chips[j]); }
-
+  var cf=document.getElementById('clientFilter'); var clients=listAllClients(); var html='<option value="all">全クライアント</option>'; for(var i=0;i<clients.length;i++){ html+='<option value="'+clients[i]+'">'+clients[i]+'</option>'; } cf.innerHTML=html; cf.value=state.client; cf.onchange=function(e){ state.client=e.target.value; save(); renderGroups(); renderPanels(); };
+  var chips=document.querySelectorAll('[data-preset]'); for(var j=0;j<chips.length;j++){ (function(btn){ btn.classList.toggle('active',btn.getAttribute('data-preset')===state.preset); btn.onclick=function(){ state.preset=btn.getAttribute('data-preset'); save(); for(var k=0;k<chips.length;k++){ chips[k].classList.remove('active'); } btn.classList.add('active'); renderSummary(); renderGroups(); renderPanels(); }; })(chips[j]); }
   fillDataLists();
 }
 
@@ -751,7 +542,7 @@ function scheduleTonight(){
 function renderAll(){ renderSummary(); renderDays(); bindHeader(); bindSidebar(); renderGroups(); renderPanels(); }
 load(); renderAll();
 
-/* 画面サイズ変更で再測定して再配置（ズレ防止） */
+/* リサイズで再配置 */
 window.addEventListener('resize', function(){ renderGroups(); });
 </script>
 </body>
