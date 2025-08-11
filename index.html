@@ -41,7 +41,7 @@ textarea{min-height:64px;resize:vertical}
 .daysCard{grid-area:days}
 .main{grid-area:main}
 .detailArea{grid-area:detail}
-  
+
 /* Days header */
 .days{display:grid;gap:4px;grid-auto-flow:column;grid-auto-columns:minmax(36px,1fr);align-items:end}
 .day{font-size:12px;text-align:center;color:var(--muted)}
@@ -57,7 +57,7 @@ textarea{min-height:64px;resize:vertical}
 .pbar{height:var(--proj-h); color:#fff; box-shadow:0 2px 4px rgba(0,0,0,.1)}
 .tbar{height:var(--task-h); color:#0f172a; border:1px solid var(--railBorder)}
 
-/* Panels: top 2 (Client/Project) + detail strip */
+/* Panels */
 .panesTop{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}
 @media(max-width:1000px){.panesTop{grid-template-columns:1fr}}
 .compact .row{gap:6px}
@@ -84,13 +84,12 @@ textarea{min-height:64px;resize:vertical}
 .status-chip{display:flex;align-items:center;gap:8px}
 .flag{width:14px;height:10px;display:inline-block;position:relative}
 .flag:before{content:"";position:absolute;left:0;top:2px;border-top:4px solid transparent;border-bottom:4px solid transparent;border-left:8px solid currentColor}
-.flag:after{content:"";position:absolute;left:8px;top:2px;width:2px;height:8px;background:currentColor;border-radius:1px} 
+.flag:after{content:"";position:absolute;left:8px;top:2px;width:2px;height:8px;background:currentColor;border-radius:1px}
 
-/* Gantt を必ず見えるようにする最小セット */
+/* === ガント強制表示＋ズレ補正の基礎 === */
 #groups{ display:block; }
 .rail{ display:grid !important; position:relative !important; overflow:visible; }
 .pbar,.tbar{ position:absolute; top:0; z-index:10; }
-
 </style>
 </head>
 <body>
@@ -107,7 +106,6 @@ textarea{min-height:64px;resize:vertical}
       <select id="clientFilter"><option value="all">全クライアント</option></select>
       <button id="theme" class="btn" title="テーマ切替">🌙/☀️</button>
     </div>
-    <!-- 新規作成：案件名→クライアント→開始/終了日（履歴プルダウン付き） -->
     <div class="row" style="width:100%; margin-top:6px">
       <input id="qa-title" type="text" placeholder="タスク名（例：LP第2稿）" style="flex:1" />
       <input id="qa-project" list="projectList" type="text" placeholder="案件名（新規可）" style="width:200px" />
@@ -127,7 +125,6 @@ textarea{min-height:64px;resize:vertical}
   </div>
 
   <div class="layout">
-    <!-- 左：サイドバー -->
     <aside class="card" id="nav">
       <h2>スマートビュー</h2>
       <nav style="display:flex;flex-direction:column;gap:6px">
@@ -147,16 +144,11 @@ textarea{min-height:64px;resize:vertical}
       </div>
     </aside>
 
-    <!-- 月日付（サイドバー右横から開始） -->
     <div class="card daysCard"><div id="days" class="days"></div></div>
-
-    <!-- メイン：案件→タスクの段組みガント -->
     <div class="main"><div id="groups" class="list"></div></div>
 
-    <!-- 下段：クライアント情報 / 案件概要 / 詳細ストリップ -->
     <div class="detailArea">
       <div class="panesTop">
-        <!-- クライアント情報 -->
         <div class="card compact" id="panelClient">
           <div class="row" style="justify-content:space-between;align-items:center">
             <h3>クライアント情報</h3>
@@ -178,7 +170,6 @@ textarea{min-height:64px;resize:vertical}
           <div class="lbl" style="margin-top:2px">※ 請求書の宛先に反映されます</div>
         </div>
 
-        <!-- 案件概要（色＝ステータス連動） -->
         <div class="card compact" id="panelProject">
           <div class="row" style="justify-content:space-between;align-items:center">
             <h3>案件概要</h3>
@@ -205,7 +196,6 @@ textarea{min-height:64px;resize:vertical}
         </div>
       </div>
 
-      <!-- タスク詳細ストリップ（ガントに出てるものだけ） -->
       <div class="strip-wrap">
         <div class="strip-head">
           <h3 style="margin:0;font-size:15px">タスク詳細（ガントに表示中のみ）</h3>
@@ -249,12 +239,12 @@ var state={
   projects:{}
 };
 
-/* ステータス色（旗アイコン＆案件バー／タスクバー） */
+/* Colors */
 var COLORS = {
-  'Planned':    {proj:'#60a5fa', task:'#bfdbfe'}, // blue（薄め）
-  'In Progress':{proj:'#34d399', task:'#bbf7d0'}, // green
-  'Blocked':    {proj:'#f87171', task:'#fecaca'}, // red
-  'Done':       {proj:'#8b5cf6', task:'#ddd6fe'}  // purple
+  'Planned':    {proj:'#60a5fa', task:'#bfdbfe'},
+  'In Progress':{proj:'#34d399', task:'#bbf7d0'},
+  'Blocked':    {proj:'#f87171', task:'#fecaca'},
+  'Done':       {proj:'#8b5cf6', task:'#ddd6fe'}
 };
 var STATUS_ORDER = ['Planned','In Progress','Blocked','Done'];
 
@@ -265,7 +255,7 @@ var seed=(function(){ var a=new Date(); return [
   {id:'t3', title:'素材収集', client:'Beta Studio', project:'キャンペーンA/W', start:fmt(new Date(a.getFullYear(), a.getMonth(), 7)), end:fmt(new Date(a.getFullYear(), a.getMonth(), 10)), progress:50, status:'In Progress', memos:[], createdAt:new Date().toISOString()}
 ];})();
 
-/* Ensurers */
+/* Ensure maps */
 function ensureClient(name){ var key=(name&&name.trim())? name.trim(): '(未設定)'; if(!state.clients[key]){ state.clients[key]={ company:key, person:'', phone:'', email:'', address:'', terms:'' }; } return key; }
 function ensureProject(name){ var key=(name&&name.trim())? name.trim(): '(未分類)'; if(!state.projects[key]){ state.projects[key]={ name:key, start:'', end:'', notes:'', progress:0, status:'Planned' }; } return key; }
 
@@ -296,7 +286,7 @@ function renderDays(){
   for(var i=1;i<=n;i++){ var d=new Date(y,m,i); var div=document.createElement('div'); div.className='day'; div.textContent=(m+1)+'/'+i; var dow=document.createElement('span'); dow.className='dow'; dow.textContent='日月火水木金土'.charAt(d.getDay()); div.appendChild(dow); root.appendChild(div); }
 }
 
-/* Status palette (left) */
+/* Status palette */
 function renderStatusFilters(){
   var host=document.getElementById('statusFilters'); host.innerHTML='';
   for(var i=0;i<STATUS_ORDER.length;i++){
@@ -344,7 +334,7 @@ function filteredTasks(){
   });
 }
 
-/* Group by project + auto project range */
+/* Group & range */
 function groupByProject(tasks){
   var map={}; for(var i=0;i<tasks.length;i++){ var p=tasks[i].project||'(未分類)'; if(!map[p]) map[p]=[]; map[p].push(tasks[i]); }
   return map;
@@ -361,8 +351,20 @@ function computeProjectRange(projectName, tasks){
   }
   if(!minS || !maxE){ minS=''; maxE=''; }
   var key=ensureProject(projectName);
-  state.projects[key].start=minS; state.projects[key].end=maxE; // 自動調整
+  state.projects[key].start=minS; state.projects[key].end=maxE;
   return {start:minS, end:maxE};
+}
+
+/* === PIXEL正確配置: グリッドのセルを実測してバーを置く === */
+function placeBarPx(rail, bar, index, span){
+  const cells = rail.querySelectorAll('.cell');
+  if(!cells.length) return;
+  const startIdx = Math.max(0, Math.min(index, cells.length-1));
+  const endIdx   = Math.max(startIdx, Math.min(index+span-1, cells.length-1));
+  const left = cells[startIdx].offsetLeft;
+  const right = cells[endIdx].offsetLeft + cells[endIdx].offsetWidth;
+  bar.style.left  = left + 'px';
+  bar.style.width = Math.max(1, right - left) + 'px';
 }
 
 /* Rail helpers */
@@ -372,8 +374,6 @@ function clampToMonth(startStr,endStr){
 
   const y=state.monthAnchor.getFullYear(), m=state.monthAnchor.getMonth();
   const first=new Date(y,m,1), last=new Date(y,m,daysInMonth(state.monthAnchor));
-
-  // 完全に表示範囲外なら描かない
   if(end < first || start > last) return null;
 
   const s = start < first ? first : start;
@@ -385,7 +385,7 @@ function clampToMonth(startStr,endStr){
   return { index, span, total };
 }
 
-/* Main grouped gantt */
+/* Gantt */
 function renderGroups(){
   var root=document.getElementById('groups'); root.innerHTML='';
   var tasks = filteredTasks();
@@ -402,7 +402,6 @@ function renderGroups(){
       var pObj=state.projects[pKey]||{status:'Planned'}; var pStatus=pObj.status||'Planned';
       var col = COLORS[pStatus] || COLORS['Planned'];
 
-      // 自動範囲
       var pr = computeProjectRange(projectName, list);
 
       var group=document.createElement('div'); group.className='group';
@@ -412,36 +411,36 @@ function renderGroups(){
       head.appendChild(tl); head.appendChild(tr);
       group.appendChild(head);
 
-      // 案件バー（上段）
+      // 案件レール（先にDOMへ追加してから測る）
       var railP=document.createElement('div'); railP.className='rail'; railP.style.gridTemplateColumns='repeat('+total+', minmax(36px,1fr))';
       for(var c=0;c<total;c++){ var cell=document.createElement('div'); cell.className='cell'; railP.appendChild(cell); }
+      group.appendChild(railP);
+
       var posP = clampToMonth(pr.start, pr.end);
       if (posP) {
         var barP=document.createElement('div'); barP.className='pbar';
-        barP.style.left='calc('+posP.index+'*(100%/'+total+') + '+(posP.index*4)+'px)';
-        barP.style.width='calc('+posP.span+'*(100%/'+total+') + '+((posP.span-1)*4)+'px)';
-        barP.style.background=col.proj;
-        barP.textContent='案件';
+        barP.style.background=col.proj; barP.textContent='案件';
         railP.appendChild(barP);
+        requestAnimationFrame(function(){ placeBarPx(railP, barP, posP.index, posP.span); });
       }
-      group.appendChild(railP);
 
-      // タスクバー（案件バーの下に各行）
+      // タスク
       for(var t=0;t<list.length;t++){
         (function(task){
           var rail=document.createElement('div'); rail.className='rail'; rail.style.gridTemplateColumns='repeat('+total+', minmax(36px,1fr))';
           for(var c=0;c<total;c++){ var cell2=document.createElement('div'); cell2.className='cell'; rail.appendChild(cell2); }
+          group.appendChild(rail);
+
           var pos = clampToMonth(task.start, task.end);
-          if (!pos) { group.appendChild(rail); return; } // 無効/範囲外はバーなしで行だけ
+          if (!pos) return;
+
           var bar=document.createElement('div'); bar.className='tbar';
-          bar.style.left='calc('+pos.index+'*(100%/'+total+') + '+(pos.index*4)+'px)';
-          bar.style.width='calc('+pos.span+'*(100%/'+total+') + '+((pos.span-1)*4)+'px)';
           bar.style.background=col.task;
           bar.title=task.title+' '+task.start+' → '+task.end;
           bar.textContent=task.title+' ('+task.progress+'%)';
           bar.onclick=function(){ state.selectedId=task.id; openDetailPanel(task.id); save(); renderPanels(); };
           rail.appendChild(bar);
-          group.appendChild(rail);
+          requestAnimationFrame(function(){ placeBarPx(rail, bar, pos.index, pos.span); });
         })(list[t]);
       }
 
@@ -450,10 +449,9 @@ function renderGroups(){
   }
 }
 
-/* Panels orchestrator */
+/* Panels */
 function renderPanels(){ renderClientPanel(); renderProjectPanel(); renderDetailStrip(); }
 
-/* Client panel */
 function listAllClients(){ var map={}, out=[], k; for(var i=0;i<state.tasks.length;i++){ k=ensureClient(state.tasks[i].client); if(!map[k]){ map[k]=true; out.push(k); } } for(k in state.clients){ if(state.clients.hasOwnProperty(k) && !map[k]){ map[k]=true; out.push(k); } } return out; }
 function listAllProjects(){ var map={}, out=[], k; for(var i=0;i<state.tasks.length;i++){ k=ensureProject(state.tasks[i].project); if(!map[k]){ map[k]=true; out.push(k); } } for(k in state.projects){ if(state.projects.hasOwnProperty(k) && !map[k]){ map[k]=true; out.push(k); } } return out; }
 function currentTask(){ for(var i=0;i<state.tasks.length;i++){ if(state.tasks[i].id===state.selectedId){ return state.tasks[i]; } } return null; }
@@ -481,7 +479,6 @@ function renderClientPanel(){
   };
 }
 
-/* Project panel（保存→色/期間も反映） */
 function activeProjectKey(){ var t=currentTask(); if(t && t.project){ return ensureProject(t.project); } return ensureProject('(未分類)'); }
 function renderProjectPanel(){
   var t=currentTask(), key=activeProjectKey(), data=state.projects[key]||{name:'',start:'',end:'',notes:'',progress:0,status:'Planned'};
@@ -523,7 +520,7 @@ function renderProjectPanel(){
   };
 }
 
-/* Detail strip（可視タスクのみ） */
+/* Detail strip */
 function visibleTaskIds(){
   var ids={}, list=filteredTasks();
   var y=state.monthAnchor.getFullYear(), m=state.monthAnchor.getMonth();
@@ -599,7 +596,7 @@ function renderDetailStrip(){
   hint.style.display = shown? 'none':'block';
 }
 
-/* Sidebar (nav + clients + status) */
+/* Sidebar */
 function bindSidebar(){
   var navBtns=document.querySelectorAll('#nav [data-nav]');
   for(var i=0;i<navBtns.length;i++){ (function(btn){
@@ -615,7 +612,6 @@ function bindSidebar(){
     };
   })(navBtns[i]); }
 
-  // Clients
   var area=document.getElementById('navClients'); area.innerHTML='<button class="chip" data-client="all">全クライアント</button>';
   var exists={}, order=[];
   for(var k=0;k<state.tasks.length;k++){ var c=(state.tasks[k].client&&state.tasks[k].client.trim())? state.tasks[k].client: '(未設定)'; if(!exists[c]){ exists[c]=true; order.push(c); } }
@@ -626,7 +622,6 @@ function bindSidebar(){
     btn.onclick=function(){ state.client=btn.getAttribute('data-client'); state.preset='all'; state.selectedId=null; save(); renderSummary(); renderGroups(); renderPanels(); for(var y=0;y<cBtns.length;y++){ cBtns[y].classList.remove('active'); } btn.classList.add('active'); };
   })(cBtns[x]); }
 
-  // Status palette
   renderStatusFilters();
 }
 function showInbox(){ var orig=filteredTasks; filteredTasks=function(){ var now=Date.now(); return state.tasks.filter(function(t){ var created=t.createdAt? Date.parse(t.createdAt): now; var recent=(now-created)<(24*60*60*1000); var noClient=!t.client||t.client.trim()===''; return recent||noClient; }); }; renderGroups(); filteredTasks=orig; renderPanels(); }
@@ -659,7 +654,6 @@ function bindHeader(){
     ensureClient(client); ensureProject(project);
     state.selectedId=id; openDetailPanel(id); save();
 
-    // クリア＋リスト更新
     document.getElementById('qa-title').value=''; document.getElementById('qa-project').value=''; document.getElementById('qa-client').value='';
     document.getElementById('qa-start').value=''; document.getElementById('qa-end').value='';
     fillDataLists();
@@ -711,6 +705,9 @@ function scheduleTonight(){
 /* Render All */
 function renderAll(){ renderSummary(); renderDays(); bindHeader(); bindSidebar(); renderGroups(); renderPanels(); }
 load(); renderAll();
+
+/* 画面サイズ変更で再測定して再配置（ズレ防止） */
+window.addEventListener('resize', function(){ renderGroups(); });
 </script>
 </body>
 </html>
